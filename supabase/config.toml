@@ -1,0 +1,4 @@
+project_id = "virtualshopagent"
+
+[functions.tryon-request]
+verify_jwt = false
