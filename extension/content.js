@@ -1,125 +1,194 @@
-(function initVirtualShopAgent() {
-  if (window.__VSA_LOADED__) return;
-  window.__VSA_LOADED__ = true;
+// extension/content.js
 
-  function getMetaValue(propertyName) {
-    const node = document.querySelector(`meta[property='${propertyName}'], meta[name='${propertyName}']`);
-    return node?.getAttribute("content")?.trim() || "";
-  }
+(function () {
+  const BTN_ID = "vto-try-btn";
+  const OVERLAY_ID = "vto-overlay";
 
-  function getLargestImage() {
-    const images = Array.from(document.querySelectorAll("img"));
+  function getBestImageUrl() {
+    // 1) Prefer og:image
+    const og = document.querySelector('meta[property="og:image"]');
+    if (og?.content) return og.content;
+
+    // 2) Otherwise pick largest visible img
+    const imgs = Array.from(document.images || []);
     let best = null;
     let bestScore = 0;
 
-    for (const img of images) {
+    for (const img of imgs) {
       const rect = img.getBoundingClientRect();
-      const isVisible = rect.width > 80 && rect.height > 80 && rect.bottom > 0 && rect.right > 0;
-      if (!isVisible) continue;
+      const visible = rect.width > 80 && rect.height > 80 && rect.bottom > 0 && rect.right > 0;
+      if (!visible) continue;
 
-      const naturalArea = (img.naturalWidth || rect.width) * (img.naturalHeight || rect.height);
-      if (naturalArea > bestScore && img.src) {
-        best = img;
-        bestScore = naturalArea;
+      const score = rect.width * rect.height;
+      if (score > bestScore && img.currentSrc) {
+        bestScore = score;
+        best = img.currentSrc;
+      } else if (score > bestScore && img.src) {
+        bestScore = score;
+        best = img.src;
       }
     }
 
     return best;
   }
 
-  function detectProductContext() {
-    const ogImage = getMetaValue("og:image");
-    const ogTitle = getMetaValue("og:title");
-    const heading = document.querySelector("h1")?.textContent?.trim() || "";
-    const priceNode = document.querySelector("[itemprop='price'], .price, [data-price]");
-    const fallbackImage = getLargestImage();
-
-    return {
-      pageUrl: window.location.href,
-      imageUrl: ogImage || fallbackImage?.currentSrc || fallbackImage?.src || "",
-      title: ogTitle || heading || document.title,
-      price: priceNode?.textContent?.trim() || "",
-      retailerDomain: window.location.hostname
-    };
+  function getTitle() {
+    const ogt = document.querySelector('meta[property="og:title"]');
+    if (ogt?.content) return ogt.content;
+    const h1 = document.querySelector("h1");
+    if (h1?.textContent?.trim()) return h1.textContent.trim();
+    return document.title || "Product";
   }
 
-  const button = document.createElement("button");
-  button.textContent = "Try with VTO";
-  Object.assign(button.style, {
-    position: "fixed",
-    bottom: "24px",
-    right: "24px",
-    padding: "12px 16px",
-    background: "#111",
-    color: "#fff",
-    border: "none",
-    borderRadius: "10px",
-    cursor: "pointer",
-    zIndex: "2147483647"
-  });
+  function ensureButton() {
+    if (document.getElementById(BTN_ID)) return;
 
-  function createOverlay() {
-    const overlay = document.createElement("div");
-    Object.assign(overlay.style, {
-      position: "fixed",
-      inset: "0",
-      background: "rgba(0, 0, 0, 0.72)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      zIndex: "2147483647"
-    });
+    const btn = document.createElement("button");
+    btn.id = BTN_ID;
+    btn.textContent = "Try with VTO";
+    btn.style.position = "fixed";
+    btn.style.right = "18px";
+    btn.style.bottom = "18px";
+    btn.style.zIndex = "2147483647";
+    btn.style.padding = "12px 14px";
+    btn.style.borderRadius = "999px";
+    btn.style.border = "0";
+    btn.style.cursor = "pointer";
+    btn.style.boxShadow = "0 10px 25px rgba(0,0,0,0.18)";
+    btn.style.font = "600 14px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    btn.style.background = "#111";
+    btn.style.color = "#fff";
 
-    const panel = document.createElement("div");
-    Object.assign(panel.style, {
-      background: "#fff",
-      color: "#111",
-      borderRadius: "14px",
-      padding: "16px",
-      maxWidth: "90vw",
-      maxHeight: "90vh",
-      overflow: "auto"
-    });
+    btn.addEventListener("click", onTryClick);
 
-    const status = document.createElement("p");
-    status.textContent = "Loading preview...";
-
-    const closeButton = document.createElement("button");
-    closeButton.textContent = "Close";
-    closeButton.addEventListener("click", () => overlay.remove());
-    closeButton.style.marginBottom = "12px";
-
-    panel.append(closeButton, status);
-    overlay.appendChild(panel);
-    document.body.appendChild(overlay);
-
-    return { overlay, panel, status };
+    document.documentElement.appendChild(btn);
   }
 
-  button.addEventListener("click", () => {
-    const payload = detectProductContext();
-    if (!payload.imageUrl) {
-      alert("Could not detect a product image on this page.");
+  function showOverlay({ loadingText, imageUrl, errorText }) {
+    let overlay = document.getElementById(OVERLAY_ID);
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = OVERLAY_ID;
+      overlay.style.position = "fixed";
+      overlay.style.inset = "0";
+      overlay.style.zIndex = "2147483647";
+      overlay.style.background = "rgba(0,0,0,0.55)";
+      overlay.style.display = "flex";
+      overlay.style.alignItems = "center";
+      overlay.style.justifyContent = "center";
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) overlay.remove();
+      });
+
+      document.documentElement.appendChild(overlay);
+    }
+
+    overlay.innerHTML = "";
+
+    const card = document.createElement("div");
+    card.style.width = "min(520px, 92vw)";
+    card.style.maxHeight = "86vh";
+    card.style.overflow = "auto";
+    card.style.background = "#fff";
+    card.style.borderRadius = "16px";
+    card.style.boxShadow = "0 25px 60px rgba(0,0,0,0.35)";
+    card.style.padding = "16px";
+    card.style.font = "14px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+
+    const top = document.createElement("div");
+    top.style.display = "flex";
+    top.style.justifyContent = "space-between";
+    top.style.alignItems = "center";
+    top.style.marginBottom = "10px";
+
+    const title = document.createElement("div");
+    title.textContent = "VTO Preview";
+    title.style.fontWeight = "700";
+
+    const close = document.createElement("button");
+    close.textContent = "✕";
+    close.style.border = "0";
+    close.style.background = "transparent";
+    close.style.cursor = "pointer";
+    close.style.fontSize = "18px";
+    close.addEventListener("click", () => overlay.remove());
+
+    top.appendChild(title);
+    top.appendChild(close);
+    card.appendChild(top);
+
+    if (loadingText) {
+      const p = document.createElement("div");
+      p.textContent = loadingText;
+      p.style.padding = "10px 0";
+      card.appendChild(p);
+    }
+
+    if (errorText) {
+      const p = document.createElement("div");
+      p.textContent = errorText;
+      p.style.padding = "10px 0";
+      p.style.color = "crimson";
+      p.style.fontWeight = "600";
+      card.appendChild(p);
+    }
+
+    if (imageUrl) {
+      const img = document.createElement("img");
+      img.src = imageUrl;
+      img.alt = "VTO Result";
+      img.style.width = "100%";
+      img.style.borderRadius = "12px";
+      img.style.display = "block";
+      card.appendChild(img);
+    }
+
+    overlay.appendChild(card);
+  }
+
+  async function onTryClick() {
+    const imageUrl = getBestImageUrl();
+    const title = getTitle();
+    const pageUrl = location.href;
+    const retailerDomain = location.hostname;
+
+    if (!imageUrl) {
+      showOverlay({ errorText: "Could not find a product image on this page." });
       return;
     }
 
-    const { panel, status } = createOverlay();
+    showOverlay({ loadingText: "Loading preview…" });
 
-    chrome.runtime.sendMessage({ type: "VTO_RENDER", payload }, (response) => {
-      if (!response?.ok || !response.resultImageUrl) {
-        status.textContent = response?.error || "Failed to generate preview.";
-        return;
+    chrome.runtime.sendMessage(
+      {
+        type: "VTO_TRYON_REQUEST",
+        payload: {
+          pageUrl,
+          imageUrl,
+          title,
+          price: "",
+          retailerDomain
+        }
+      },
+      (resp) => {
+        const err = chrome.runtime.lastError;
+        if (err) {
+          showOverlay({ errorText: `Extension error: ${err.message}` });
+          return;
+        }
+        if (!resp?.ok) {
+          showOverlay({ errorText: resp?.error || "Request failed" });
+          return;
+        }
+        showOverlay({ imageUrl: resp.resultImageUrl });
       }
+    );
+  }
 
-      status.remove();
-      const image = document.createElement("img");
-      image.src = response.resultImageUrl;
-      image.alt = `AI try-on for ${payload.title}`;
-      image.style.maxWidth = "80vw";
-      image.style.maxHeight = "75vh";
-      panel.appendChild(image);
-    });
-  });
-
-  document.body.appendChild(button);
+  // Inject button once DOM is ready
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", ensureButton);
+  } else {
+    ensureButton();
+  }
 })();
