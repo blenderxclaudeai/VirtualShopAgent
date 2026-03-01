@@ -1,5 +1,5 @@
 const VSA_CONFIG = {
-  supabaseUrl: "https://YOUR_PROJECT.supabase.co",
+  supabaseUrl: "https://yidfawmlhjltclnzfyuz.supabase.co",
   tryonFunctionName: "tryon-request",
   webDashboardUrl: "http://localhost:5173"
 };
